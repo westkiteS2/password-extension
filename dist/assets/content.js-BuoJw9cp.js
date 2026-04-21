@@ -1,0 +1,34 @@
+(function(){const $=()=>{const g=(window.location.hostname||"").replace(/^www\./,"").split(".");return g.length>=2?g[g.length-2]:g[0]},z=o=>({score:(o==null?void 0:o.score)||0,status:(o==null?void 0:o.statusClass)||"danger",warnings:(o==null?void 0:o.warnings)||[]});(function(){const o="pwguard-panel";let e=null,S=null,x=null,c=!1,f=!1,w=!1,b={x:0,y:0};function C(){if(document.getElementById(o)){e=document.getElementById(o);return}e=document.createElement("div"),e.id=o,e.className="pwguard-panel",e.style.cssText="position: absolute; z-index: 2147483647; display: none;",e.innerHTML=`
+      <div class="pwguard-header" style="cursor: move;" title="드래그 이동 / 더블클릭 최소화">
+        <span class="pwguard-title">🔒 비밀번호 보안 분석</span>
+        <div class="pwguard-controls">
+          <button class="pwguard-minimize-btn" title="최소화">-</button>
+          <button class="pwguard-close" aria-label="닫기">✕</button>
+        </div>
+      </div>
+      <div class="pwguard-body">
+        <div class="pwguard-score-row">
+          <span class="pwguard-status-badge">—</span>
+          <span class="pwguard-score-text">입력 대기 중</span>
+        </div>
+        <div class="pwguard-strength-bar-wrap">
+          <div class="pwguard-strength-bar" style="width:0%"></div>
+        </div>
+        <ul class="pwguard-warnings"></ul>
+
+        <div class="pwguard-reuse-section" style="display:none">
+          <div class="pwguard-reuse-header">
+            <span class="pwguard-reuse-badge">⚠️ 재사용 감지</span>
+            <button class="pwguard-detail-toggle">자세히 보기 ▾</button>
+          </div>
+          <ul class="pwguard-reuse-warnings"></ul>
+          <ul class="pwguard-reuse-details" style="display:none"></ul>
+        </div>
+
+        <div class="pwguard-longuse-section" style="display:none">
+          <span class="pwguard-longuse-badge">🕐 장기 사용 감지</span>
+          <ul class="pwguard-longuse-warnings"></ul>
+        </div>
+      </div>
+    `,document.body.appendChild(e),B()}function B(){const n=e.querySelector(".pwguard-header");n.addEventListener("mousedown",t=>{if(t.target.tagName==="BUTTON")return;w=!0;const s=e.getBoundingClientRect();b.x=t.clientX-s.left,b.y=t.clientY-s.top,document.addEventListener("mousemove",T),document.addEventListener("mouseup",M)}),n.addEventListener("dblclick",t=>{t.target.tagName!=="BUTTON"&&q()}),e.querySelector(".pwguard-minimize-btn").onclick=t=>{t.stopPropagation(),q()},e.querySelector(".pwguard-close").onclick=t=>{t.stopPropagation(),P()},e.querySelector(".pwguard-detail-toggle").onclick=t=>{c=!c;const s=e.querySelector(".pwguard-reuse-details");s.style.display=c?"block":"none",t.target.textContent=c?"접기 ▴":"자세히 보기 ▾"}}function T(n){!w||!e||(e.style.left=n.clientX-b.x+window.scrollX+"px",e.style.top=n.clientY-b.y+window.scrollY+"px")}function M(){w=!1,document.removeEventListener("mousemove",T),document.removeEventListener("mouseup",M)}function N(n){if(!e||!n||w)return;const t=n.getBoundingClientRect(),s=280;let a=t.right+window.scrollX+12,l=t.top+window.scrollY;a+s>window.innerWidth+window.scrollX-12&&(a=t.left+window.scrollX-s-12,a<10&&(a=t.left+window.scrollX,l=t.bottom+window.scrollY+12)),e.style.left=a+"px",e.style.top=l+"px"}function q(){f=!f,e.classList.toggle("minimized",f),e.querySelector(".pwguard-minimize-btn").textContent=f?"+":"-"}function P(){e&&(e.style.display="none"),c=!1}function A(n){if(!e)return;const t=e.querySelector(".pwguard-status-badge"),s=e.querySelector(".pwguard-score-text"),a=e.querySelector(".pwguard-strength-bar"),l=e.querySelector(".pwguard-warnings"),i={danger:{label:"위험",cls:"status-danger"},normal:{label:"보통",cls:"status-normal"},safe:{label:"안전",cls:"status-safe"}},u=i[n.status]||i.danger;t.textContent=u.label,t.className=`pwguard-status-badge ${u.cls}`,s.textContent=`점수: ${n.score}점`,a.style.width=Math.min(100,Math.max(0,n.score))+"%",a.className=`pwguard-strength-bar bar-${n.status}`,l.innerHTML=(n.warnings||[]).map(d=>`<li class="pwguard-warning-item">${d}</li>`).join("")}function U(n){if(!e)return;const t=window.buildReuseMessages?window.buildReuseMessages(n):{warnings:[],details:[],allSites:[]},{warnings:s=[],details:a=[],allSites:l=[]}=t,i=e.querySelector(".pwguard-reuse-section"),u=e.querySelector(".pwguard-reuse-warnings"),d=e.querySelector(".pwguard-reuse-details");if(n.isReused){if(i.style.display="block",u.innerHTML=s.filter(r=>!r.includes("일째")).map(r=>`<li>${r}</li>`).join(""),d.innerHTML="",a.forEach(r=>{const m=document.createElement("li");m.className="pwguard-detail-item",m.textContent=r,d.appendChild(m)}),l&&l.length>0){const m=l.slice(0,3),h=l.slice(3),L=document.createElement("li");if(L.className="pwguard-detail-item",L.textContent=`사용된 사이트: ${m.join(", ")}`,d.appendChild(L),h.length>0){const v=document.createElement("li");v.className="pwguard-detail-item";const y=document.createElement("button");y.className="pwguard-site-more-btn",y.textContent=`외 ${h.length}개 더 보기 ▾`;const p=document.createElement("ul");p.className="pwguard-site-extra-list",p.style.display="none",h.forEach(E=>{const k=document.createElement("li");k.textContent=E,p.appendChild(k)}),y.onclick=()=>{const E=p.style.display==="block";p.style.display=E?"none":"block",y.textContent=E?`외 ${h.length}개 더 보기 ▾`:"접기 ▴"},v.appendChild(y),v.appendChild(p),d.appendChild(v)}}d.style.display=c?"block":"none"}else i.style.display="none";const R=e.querySelector(".pwguard-longuse-section");n.isLongUsed?(R.style.display="block",e.querySelector(".pwguard-longuse-warnings").innerHTML=s.filter(r=>r.includes("일째")).map(r=>`<li>${r}</li>`).join("")):R.style.display="none"}function Y(n){const t=n.target,s=t.value,a=$();N(t),clearTimeout(S),S=setTimeout(()=>{var i;const l=(i=window.PwAnalyzer)==null?void 0:i.evaluatePassword(s,{siteName:a,reuseCount:0});A(z(l))},300),clearTimeout(x),s.length>=4&&(x=setTimeout(async()=>{var l;try{const i=await window.analyzeReuse(s,a);U(i);const u=(l=window.PwAnalyzer)==null?void 0:l.evaluatePassword(s,{siteName:a,reuseCount:i.reuseCount});A(z(u))}catch(i){console.warn("[PwGuard] Analysis delay:",i)}},800))}function D(n){(n.querySelectorAll?n.querySelectorAll('input[type="password"]'):[]).forEach(a=>{a.dataset.pwguardAttached||(a.dataset.pwguardAttached="true",a.addEventListener("focus",l=>{l.target,C(),N(l.target),e.style.display="block"}),a.addEventListener("input",Y),a.addEventListener("blur",()=>{setTimeout(()=>{!w&&!(e!=null&&e.contains(document.activeElement))&&P()},150)}))})}function I(){C(),D(document),new MutationObserver(n=>n.forEach(t=>t.addedNodes.forEach(s=>{s.nodeType===1&&D(s.matches('input[type="password"]')?s.parentElement:s)}))).observe(document.body,{childList:!0,subtree:!0})}document.readyState==="loading"?document.addEventListener("DOMContentLoaded",I):I()})();
+})()
