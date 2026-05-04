@@ -10,15 +10,9 @@
     {
       "matches": ["<all_urls>"],
       "js": ["content.js"],
-      "css": ["content.css"],
-      "run_at": "document_idle",
-      "all_frames": false
+      "css": ["content.css"]
     }
   ],
-  "background": {
-    "service_worker": "storage.js",
-    "type": "module"
-  },
 
   "action": {
     "default_popup": "popup.html"
