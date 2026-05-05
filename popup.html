@@ -1,11 +1,13 @@
-<!DOCTYPE html>
+<!-- popup.html -->
+<!doctype html>
 <html lang="ko">
-  <>
+  <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Password Manager</title>
     <link rel="stylesheet" href="popup.css" />
-    <script src ="supabaseClient.js"></script>
+    <!-- Supabase 라이브러리(CDN) 로드 -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
   </head>
   <body>
     <div id="auth-section">
@@ -15,6 +17,13 @@
       <button id="signup-btn">회원가입</button>
     </div>
 
-    <script src="popup.js"></script>
+    <div id="success-section" style="display: none">
+      <h2>로그인 완료</h2>
+      <p><span id="user-display-email"></span>님, 환영합니다!</p>
+      <button id="logout-btn">로그아웃</button>
+    </div>
+
+    <!-- 메인 로직 파일만 모듈로 로드 (supabaseClient.js는 여기서 직접 부르지 않음) -->
+    <script type="module" src="popup.js"></script>
   </body>
 </html>
