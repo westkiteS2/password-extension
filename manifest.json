@@ -5,14 +5,24 @@
   "description": "로그인·회원가입 페이지에서 비밀번호 강도를 실시간 분석하고 재사용을 탐지합니다.",
 
   "permissions": ["storage", "activeTab"],
-  "host_permissions": ["<all_urls>", "http://*.supabase.co/"],
+  "host_permissions": ["<all_urls>"],
+
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content.js"],
+      "js": ["utils.js", "analyzer.js", "reuse.js", "content.js"],
       "css": ["content.css"]
     }
   ],
+
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  },
 
   "action": {
     "default_popup": "popup.html"
