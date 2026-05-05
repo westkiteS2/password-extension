@@ -26,30 +26,22 @@ async function recordHash(hash, domain) {
   const userId = await getUserId()
   if (!userId) return { error: '로그인 필요' }
 
-  const now = new Date().toISOString()
-
-  // 이미 있으면 last_seen만 업데이트, 없으면 insert
-  const { data: existing } = await supabase
-    .from('password_analytics')
-    .select('id')
-    .eq('user_id', userId)
-    .eq('password_hash', hash)
-    .eq('domain', domain)
-    .single()
-
-  if (existing) {
-    await supabase
-      .from('password_analytics')
-      .update({ last_seen: now })
-      .eq('id', existing.id)
-  } else {
-    await supabase.from('password_analytics').insert({
+  // .upsert()를 사용하여 (user_id, password_hash, domain) 조합이 겹치면 last_seen만 업데이트합니다.
+  const { error } = await supabase.from('password_analytics').upsert(
+    {
       user_id: userId,
       password_hash: hash,
       domain: domain,
-      first_seen: now,
-      last_seen: now,
-    })
+      last_seen: new Date().toISOString(),
+    },
+    {
+      onConflict: 'user_id, password_hash, domain',
+    },
+  )
+
+  if (error) {
+    console.error('[PwGuard] Supabase upsert 오류:', error.message)
+    return { error: error.message }
   }
 
   return { success: true }
