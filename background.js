@@ -1,7 +1,6 @@
 /**
  * background.js
- * Service Worker - Supabase 통신을 담당합니다.
- * content.js에서 오는 메시지를 받아 Supabase DB와 통신합니다.
+ * Service Worker - Supabase 통신 및 로그인 성공 감지 저장 로직
  */
 
 import { createClient } from './supabase-bundle.js'
@@ -11,9 +10,11 @@ const SUPABASE_ANON_KEY = 'sb_publishable_wWDN3L3XOSWAwZiN_RouBQ_jgKs-khP'
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 
+// [추가] 로그인 성공 판단을 위한 임시 저장 변수
+let pendingLogin = null
+
 // ─── 현재 로그인된 유저 ID 가져오기 ────────────────────────────────────────────
 async function getUserId() {
-  // chrome.storage.local에 저장된 세션에서 user_id 가져오기
   return new Promise((resolve) => {
     chrome.storage.local.get(['session'], (result) => {
       resolve(result.session?.user?.id || null)
@@ -26,7 +27,6 @@ async function recordHash(hash, domain) {
   const userId = await getUserId()
   if (!userId) return { error: '로그인 필요' }
 
-  // .upsert()를 사용하여 (user_id, password_hash, domain) 조합이 겹치면 last_seen만 업데이트합니다.
   const { error } = await supabase.from('password_analytics').upsert(
     {
       user_id: userId,
@@ -105,9 +105,20 @@ async function getDaysUsedOnSite(hash, currentDomain) {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const { action, payload } = message
 
+  // [수정] 즉시 기록 대신 '시도' 정보를 보관
+  if (action === 'attemptLogin') {
+    pendingLogin = {
+      hash: payload.hash,
+      domain: payload.domain,
+      tabId: sender.tab.id,
+    }
+    sendResponse({ status: 'pending' })
+    return true
+  }
+
   if (action === 'recordHash') {
     recordHash(payload.hash, payload.domain).then(sendResponse)
-    return true // 비동기 응답
+    return true
   }
 
   if (action === 'checkReuse') {
@@ -125,5 +136,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ session: result.session || null })
     })
     return true
+  }
+})
+
+// [추가] 페이지 내비게이션 완료 시 로그인 성공으로 간주하여 저장
+chrome.webNavigation.onCompleted.addListener((details) => {
+  // 메인 프레임의 이동이고, 보관된 로그인 시도 정보가 현재 탭과 일치할 때
+  if (
+    details.frameId === 0 &&
+    pendingLogin &&
+    details.tabId === pendingLogin.tabId
+  ) {
+    console.log('[PwGuard] 로그인 성공 감지: DB에 기록을 수행합니다.')
+    recordHash(pendingLogin.hash, pendingLogin.domain)
+    pendingLogin = null // 기록 후 초기화
   }
 })

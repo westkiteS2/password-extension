@@ -1,7 +1,7 @@
 /**
  * content.js
  * 비밀번호 보안 분석 패널 메인 컨트롤러
- * 기능: 드래그, 최소화, 강도 분석 연동, 재사용 탐지 연동, 사이트 목록 토글
+ * 수정 사항: 주민번호 입력 필드 감지 및 처리 제외 로직 추가
  */
 
 // ─── 브릿지 함수들 (외부 JS 의존성 연결) ──────────────────────────────────────
@@ -35,9 +35,31 @@ const normalizeAnalyzerResult = (result) => ({
   let isDetailOpen = false
   let isMinimized = false
 
+  // 로그인 성공 판단을 위한 임시 상태 변수
+  let lastTypedPassword = ''
+
   // 드래그 상태 변수
   let isDragging = false
   let offset = { x: 0, y: 0 }
+
+  // [추가] 주민번호 입력창인지 확인하는 함수
+  function isJuminInput(el) {
+    if (!el) return false
+    const keywords = ['jumin', 'rrn', 'ssn', 'regno', 'resident', 'residentno']
+    const attrs = [
+      el.id,
+      el.name,
+      el.getAttribute('title'),
+      el.getAttribute('placeholder'),
+      el.className,
+    ]
+
+    return attrs.some((attr) => {
+      if (!attr) return false
+      const lowerAttr = attr.toLowerCase()
+      return keywords.some((key) => lowerAttr.includes(key))
+    })
+  }
 
   // ─── 패널 생성 및 초기화 ──────────────────────────────────────────────────────
   function createPanel() {
@@ -93,7 +115,6 @@ const normalizeAnalyzerResult = (result) => ({
   function setupPanelEvents() {
     const header = panel.querySelector('.pwguard-header')
 
-    // 드래그 시작
     header.addEventListener('mousedown', (e) => {
       if (e.target.tagName === 'BUTTON') return
       isDragging = true
@@ -146,7 +167,6 @@ const normalizeAnalyzerResult = (result) => ({
     let left = rect.right + window.scrollX + 12
     let top = rect.top + window.scrollY
 
-    // 화면 우측 경계 체크
     if (left + panelWidth > window.innerWidth + window.scrollX - 12) {
       left = rect.left + window.scrollX - panelWidth - 12
       if (left < 10) {
@@ -199,7 +219,6 @@ const normalizeAnalyzerResult = (result) => ({
   function renderReuse(reuseResult) {
     if (!panel) return
 
-    // 165라인 오류 방지: buildReuseMessages 결과 안전하게 수신
     const msgs = window.buildReuseMessages
       ? window.buildReuseMessages(reuseResult)
       : { warnings: [], details: [], allSites: [] }
@@ -217,7 +236,6 @@ const normalizeAnalyzerResult = (result) => ({
         .join('')
 
       reuseDetailList.innerHTML = ''
-      // 상세 설명 추가
       details.forEach((d) => {
         const li = document.createElement('li')
         li.className = 'pwguard-detail-item'
@@ -225,7 +243,6 @@ const normalizeAnalyzerResult = (result) => ({
         reuseDetailList.appendChild(li)
       })
 
-      // 사이트 목록 '더 보기' 토글 로직
       if (allSites && allSites.length > 0) {
         const PREVIEW_LIMIT = 3
         const preview = allSites.slice(0, PREVIEW_LIMIT)
@@ -270,7 +287,6 @@ const normalizeAnalyzerResult = (result) => ({
       reuseSection.style.display = 'none'
     }
 
-    // 장기 사용 섹션
     const longSec = panel.querySelector('.pwguard-longuse-section')
     if (reuseResult.isLongUsed) {
       longSec.style.display = 'block'
@@ -288,6 +304,13 @@ const normalizeAnalyzerResult = (result) => ({
     const input = e.target
     const value = input.value
     const domain = getSiteName()
+
+    // [수정] 나중에 로그인 성공 시 사용하기 위해 입력값 보관
+    lastTypedPassword = value
+
+    // 주민번호 필드인 경우 분석 패널 업데이트 중단
+    if (isJuminInput(input)) return
+
     positionPanel(input)
 
     clearTimeout(strengthDebounceTimer)
@@ -305,7 +328,6 @@ const normalizeAnalyzerResult = (result) => ({
         try {
           const reuseResult = await window.analyzeReuse(value, domain)
           renderReuse(reuseResult)
-          // 재사용 횟수 반영하여 강도 재계산
           const updatedRaw = window.PwAnalyzer?.evaluatePassword(value, {
             siteName: domain,
             reuseCount: reuseResult.reuseCount,
@@ -318,6 +340,25 @@ const normalizeAnalyzerResult = (result) => ({
     }
   }
 
+  // 로그인 시도를 추적하는 로직
+  function trackLoginAttempt() {
+    // 주민번호 필드인 경우 서버 저장을 원천 차단
+    if (activeInput && isJuminInput(activeInput)) {
+      console.log('[PwGuard] 주민번호 필드로 감지되어 기록을 생략합니다.')
+      return
+    }
+
+    if (lastTypedPassword.length < 4) return
+
+    const domain = getSiteName()
+    window.PwUtils?.hashPassword(lastTypedPassword).then((hash) => {
+      chrome.runtime.sendMessage({
+        action: 'attemptLogin',
+        payload: { hash, domain },
+      })
+    })
+  }
+
   function attachEvents(root) {
     const selector = 'input[type="password"]'
     const inputs = root.querySelectorAll ? root.querySelectorAll(selector) : []
@@ -325,6 +366,9 @@ const normalizeAnalyzerResult = (result) => ({
       if (input.dataset.pwguardAttached) return
       input.dataset.pwguardAttached = 'true'
       input.addEventListener('focus', (e) => {
+        // [수정] 주민번호 필드라면 분석 패널을 아예 띄우지 않음
+        if (isJuminInput(e.target)) return
+
         activeInput = e.target
         createPanel()
         positionPanel(e.target)
@@ -337,6 +381,17 @@ const normalizeAnalyzerResult = (result) => ({
             hidePanel()
         }, 150)
       })
+
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') trackLoginAttempt()
+      })
+    })
+
+    const submitButtons = root.querySelectorAll(
+      'button[type="submit"], input[type="submit"], .login-btn, #login-btn',
+    )
+    submitButtons.forEach((btn) => {
+      btn.addEventListener('click', trackLoginAttempt)
     })
   }
 

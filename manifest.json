@@ -4,7 +4,7 @@
   "version": "1.1.0",
   "description": "로그인·회원가입 페이지에서 비밀번호 강도를 실시간 분석하고 재사용을 탐지합니다.",
 
-  "permissions": ["storage", "activeTab"],
+  "permissions": ["storage", "activeTab", "webNavigation"],
   "host_permissions": ["<all_urls>"],
 
   "background": {
