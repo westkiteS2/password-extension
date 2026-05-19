@@ -217,30 +217,59 @@
 }
 
 /* 유출됨 */
-.pwguard-leak-section .pwguard-leak-dot  { background: #ef4444; }
-.pwguard-leak-section .pwguard-leak-label { color: #ef4444; font-weight: 600; }
-.pwguard-leak-section .pwguard-leak-sub   { color: #9ca3af; }
+.pwguard-leak-section .pwguard-leak-dot {
+  background: #ef4444;
+}
+.pwguard-leak-section .pwguard-leak-label {
+  color: #ef4444;
+  font-weight: 600;
+}
+.pwguard-leak-section .pwguard-leak-sub {
+  color: #9ca3af;
+}
 
 /* 안전 */
-.pwguard-leak-safe-section .pwguard-leak-dot   { background: #10b981; }
-.pwguard-leak-safe-section .pwguard-leak-label { color: #10b981; font-weight: 600; }
+.pwguard-leak-safe-section .pwguard-leak-dot {
+  background: #10b981;
+}
+.pwguard-leak-safe-section .pwguard-leak-label {
+  color: #10b981;
+  font-weight: 600;
+}
 
 /* 검사 중 */
 .pwguard-leak-checking .pwguard-leak-dot {
   background: #d1d5db;
   animation: pwguard-pulse 1s ease-in-out infinite;
 }
-.pwguard-leak-checking .pwguard-leak-label { color: #9ca3af; }
+.pwguard-leak-checking .pwguard-leak-label {
+  color: #9ca3af;
+}
 
 @keyframes pwguard-pulse {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0.3; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
 }
 
 @media (prefers-color-scheme: dark) {
-  .pwguard-leak-section .pwguard-leak-label  { color: #f87171; }
-  .pwguard-leak-section .pwguard-leak-sub    { color: #6b7280; }
-  .pwguard-leak-safe-section .pwguard-leak-label { color: #34d399; }
-  .pwguard-leak-safe-section .pwguard-leak-dot   { background: #34d399; }
-  .pwguard-leak-section .pwguard-leak-dot        { background: #f87171; }
+  .pwguard-leak-section .pwguard-leak-label {
+    color: #f87171;
+  }
+  .pwguard-leak-section .pwguard-leak-sub {
+    color: #6b7280;
+  }
+  .pwguard-leak-safe-section .pwguard-leak-label {
+    color: #34d399;
+  }
+  .pwguard-leak-safe-section .pwguard-leak-dot {
+    background: #34d399;
+  }
+  .pwguard-leak-section .pwguard-leak-dot {
+    background: #f87171;
+  }
 }

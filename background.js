@@ -137,34 +137,62 @@ async function getDaysUsedOnSite(hash, currentDomain) {
   )
 }
 
+// ─── HIBP 유출 비밀번호 검사 (k-Anonymity) ───────────────────────────────────
+/**
+ * Have I Been Pwned Pwned Passwords API를 활용한 유출 검사
+ * SHA-1 해시의 앞 5자리(prefix)만 전송 → 나머지는 로컬 비교
+ * → 원문 비밀번호 및 전체 해시가 외부로 노출되지 않음
+ */
 async function checkLeaked(sha1Hash) {
-  const prefix = sha1Hash.slice(0, 5)
+  const prefix = sha1Hash.slice(0, 5) // 앞 5자리만 API로 전송
   const suffix = sha1Hash.slice(5).toUpperCase()
+
   try {
     const response = await fetch(
       `https://api.pwnedpasswords.com/range/${prefix}`,
-      { headers: { 'Add-Padding': 'true' } },
+      {
+        headers: {
+          // HIBP 권장 헤더: 응답 시간 기반 부채널 공격 방지
+          'Add-Padding': 'true',
+        },
+      },
     )
-    if (!response.ok)
+
+    if (!response.ok) {
+      console.warn('[PwGuard] HIBP API 응답 오류:', response.status)
       return { leaked: false, count: 0, error: `HTTP ${response.status}` }
-    const text = await response.text()
-    for (const line of text.split('\r\n')) {
-      const [hashSuffix, countStr] = line.split(':')
-      if (hashSuffix && hashSuffix.toUpperCase() === suffix)
-        return { leaked: true, count: parseInt(countStr, 10) || 0 }
     }
+
+    const text = await response.text()
+
+    // 응답 형식: "HASH_SUFFIX:유출횟수" 한 줄씩
+    const lines = text.split('\r\n')
+    for (const line of lines) {
+      const [hashSuffix, countStr] = line.split(':')
+      if (hashSuffix && hashSuffix.toUpperCase() === suffix) {
+        const count = parseInt(countStr, 10) || 0
+        return { leaked: true, count }
+      }
+    }
+
     return { leaked: false, count: 0 }
   } catch (err) {
+    console.error('[PwGuard] HIBP 통신 오류:', err.message)
     return { leaked: false, count: 0, error: err.message }
   }
 }
 
+// ─── 메시지 리스너 ─────────────────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const { action, payload } = message
+
+  // [추가] HIBP 유출 검사
   if (action === 'checkLeaked') {
     checkLeaked(payload.sha1Hash).then(sendResponse)
     return true
   }
+
+  // [수정] 즉시 기록 대신 '시도' 정보를 보관
   if (action === 'attemptLogin') {
     pendingLogin = {
       hash: payload.hash,
