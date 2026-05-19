@@ -1,13 +1,39 @@
 /**
  * content.js
  * 비밀번호 보안 분석 패널 메인 컨트롤러
- * 수정 사항: 주민번호 입력 필드 감지 및 처리 제외 로직 추가
  */
 
-// ─── 브릿지 함수들 (외부 JS 의존성 연결) ──────────────────────────────────────
 const getSiteName = () => {
-  const host = window.location.hostname || ''
-  const parts = host.replace(/^www\./, '').split('.')
+  let host = window.location.hostname || ''
+  host = host.replace(/^www\./, '') // www. 부분 제거
+  const parts = host.split('.')
+
+  // 도메인이 3마디 이상일 때 (예: unistudy.co.kr, lms.cau.ac.kr)
+  if (parts.length >= 3) {
+    const tld = parts[parts.length - 1] // 맨 뒤 (kr)
+    const sld = parts[parts.length - 2] // 중간 (co, ac 등)
+
+    // 한국에서 자주 쓰는 2단계 도메인 목록
+    const krDomains = [
+      'co',
+      'ac',
+      'go',
+      'or',
+      'ne',
+      're',
+      'pe',
+      'hs',
+      'ms',
+      'es',
+    ]
+
+    // 끝이 .kr 로 끝나고, 중간이 co, ac 등에 해당한다면 그 앞의 진짜 이름을 가져옴
+    if (tld === 'kr' && krDomains.includes(sld)) {
+      return parts[parts.length - 3] // unistudy
+    }
+  }
+
+  // 일반적인 .com, .net 이거나 위의 예외에 해당하지 않는 경우 (기존 로직 유지)
   return parts.length >= 2 ? parts[parts.length - 2] : parts[0]
 }
 
@@ -23,26 +49,23 @@ const normalizeAnalyzerResult = (result) => ({
 ;(function () {
   'use strict'
 
-  // ─── 상수 및 상태 관리 ────────────────────────────────────────────────────────
   const PANEL_ID = 'pwguard-panel'
   const DEBOUNCE_DELAY = 300
   const REUSE_DELAY = 800
+  const LEAK_DELAY = 700
 
   let activeInput = null
   let panel = null
   let strengthDebounceTimer = null
   let reuseDebounceTimer = null
+  let leakDebounceTimer = null
   let isDetailOpen = false
   let isMinimized = false
+  const leakCache = new Map()
 
-  // 로그인 성공 판단을 위한 임시 상태 변수
-  let lastTypedPassword = ''
-
-  // 드래그 상태 변수
   let isDragging = false
   let offset = { x: 0, y: 0 }
 
-  // [추가] 주민번호 입력창인지 확인하는 함수
   function isJuminInput(el) {
     if (!el) return false
     const keywords = ['jumin', 'rrn', 'ssn', 'regno', 'resident', 'residentno']
@@ -53,15 +76,34 @@ const normalizeAnalyzerResult = (result) => ({
       el.getAttribute('placeholder'),
       el.className,
     ]
-
     return attrs.some((attr) => {
       if (!attr) return false
-      const lowerAttr = attr.toLowerCase()
-      return keywords.some((key) => lowerAttr.includes(key))
+      return keywords.some((key) => attr.toLowerCase().includes(key))
     })
   }
 
-  // ─── 패널 생성 및 초기화 ──────────────────────────────────────────────────────
+  // 🚀 [보안 핵심] 네이버 RSA 암호화 무력화: 0.2초마다 순수 입력 텍스트 백업 시스템 가동
+  const passwordBackups = new Map()
+  let lastTypedPassword = ''
+
+  setInterval(() => {
+    const inputs = document.querySelectorAll('input[type="password"]')
+    inputs.forEach((input) => {
+      if (isJuminInput(input)) return
+
+      const val = input.value
+      // 네이버가 제출 시 생성하는 엄청 긴 암호문(50자 초과)은 철저히 무시
+      if (val !== undefined && val.length <= 50) {
+        if (val.length >= 4) {
+          passwordBackups.set(input, val.trim())
+          lastTypedPassword = val.trim()
+        } else if (val.length === 0) {
+          passwordBackups.delete(input) // 다 지웠을 땐 백업도 비워줌
+        }
+      }
+    })
+  }, 200)
+
   function createPanel() {
     if (document.getElementById(PANEL_ID)) {
       panel = document.getElementById(PANEL_ID)
@@ -105,16 +147,30 @@ const normalizeAnalyzerResult = (result) => ({
           <span class="pwguard-longuse-badge">🕐 장기 사용 감지</span>
           <ul class="pwguard-longuse-warnings"></ul>
         </div>
+
+        <div class="pwguard-leak-section pwguard-leak-row" style="display:none">
+          <span class="pwguard-leak-dot"></span>
+          <span class="pwguard-leak-label">유출 이력 있음</span>
+          <span class="pwguard-leak-sub pwguard-leak-count"></span>
+        </div>
+
+        <div class="pwguard-leak-safe-section pwguard-leak-row" style="display:none">
+          <span class="pwguard-leak-dot"></span>
+          <span class="pwguard-leak-label">유출 이력 없음</span>
+        </div>
+
+        <div class="pwguard-leak-checking pwguard-leak-row" style="display:none">
+          <span class="pwguard-leak-dot"></span>
+          <span class="pwguard-leak-label">유출 여부 확인 중...</span>
+        </div>
       </div>
     `
-
     document.body.appendChild(panel)
     setupPanelEvents()
   }
 
   function setupPanelEvents() {
     const header = panel.querySelector('.pwguard-header')
-
     header.addEventListener('mousedown', (e) => {
       if (e.target.tagName === 'BUTTON') return
       isDragging = true
@@ -124,21 +180,17 @@ const normalizeAnalyzerResult = (result) => ({
       document.addEventListener('mousemove', onMouseMove)
       document.addEventListener('mouseup', onMouseUp)
     })
-
     header.addEventListener('dblclick', (e) => {
       if (e.target.tagName !== 'BUTTON') toggleMinimize()
     })
-
     panel.querySelector('.pwguard-minimize-btn').onclick = (e) => {
       e.stopPropagation()
       toggleMinimize()
     }
-
     panel.querySelector('.pwguard-close').onclick = (e) => {
       e.stopPropagation()
       hidePanel()
     }
-
     panel.querySelector('.pwguard-detail-toggle').onclick = (e) => {
       isDetailOpen = !isDetailOpen
       const detailList = panel.querySelector('.pwguard-reuse-details')
@@ -147,7 +199,6 @@ const normalizeAnalyzerResult = (result) => ({
     }
   }
 
-  // ─── 드래그 및 위치 제어 ──────────────────────────────────────────────────────
   function onMouseMove(e) {
     if (!isDragging || !panel) return
     panel.style.left = e.clientX - offset.x + window.scrollX + 'px'
@@ -191,7 +242,6 @@ const normalizeAnalyzerResult = (result) => ({
     isDetailOpen = false
   }
 
-  // ─── 렌더링 엔진 (통합 업데이트) ──────────────────────────────────────────────
   function renderStrength(result) {
     if (!panel) return
     const badge = panel.querySelector('.pwguard-status-badge')
@@ -218,7 +268,6 @@ const normalizeAnalyzerResult = (result) => ({
 
   function renderReuse(reuseResult) {
     if (!panel) return
-
     const msgs = window.buildReuseMessages
       ? window.buildReuseMessages(reuseResult)
       : { warnings: [], details: [], allSites: [] }
@@ -234,8 +283,8 @@ const normalizeAnalyzerResult = (result) => ({
         .filter((w) => !w.includes('일째'))
         .map((w) => `<li>${w}</li>`)
         .join('')
-
       reuseDetailList.innerHTML = ''
+
       details.forEach((d) => {
         const li = document.createElement('li')
         li.className = 'pwguard-detail-item'
@@ -250,6 +299,7 @@ const normalizeAnalyzerResult = (result) => ({
 
         const previewLi = document.createElement('li')
         previewLi.className = 'pwguard-detail-item'
+        previewLi.style.fontWeight = 'bold'
         previewLi.textContent = `사용된 사이트: ${preview.join(', ')}`
         reuseDetailList.appendChild(previewLi)
 
@@ -259,10 +309,15 @@ const normalizeAnalyzerResult = (result) => ({
           const moreBtn = document.createElement('button')
           moreBtn.className = 'pwguard-site-more-btn'
           moreBtn.textContent = `외 ${extra.length}개 더 보기 ▾`
+          moreBtn.style.cssText =
+            'background: none; border: none; color: #007bff; cursor: pointer; padding: 0; font-size: 12px; margin-top: 4px;'
 
           const extraUl = document.createElement('ul')
           extraUl.className = 'pwguard-site-extra-list'
           extraUl.style.display = 'none'
+          extraUl.style.paddingLeft = '15px'
+          extraUl.style.marginTop = '4px'
+
           extra.forEach((s) => {
             const li = document.createElement('li')
             li.textContent = s
@@ -276,7 +331,6 @@ const normalizeAnalyzerResult = (result) => ({
               ? `외 ${extra.length}개 더 보기 ▾`
               : '접기 ▴'
           }
-
           moreLi.appendChild(moreBtn)
           moreLi.appendChild(extraUl)
           reuseDetailList.appendChild(moreLi)
@@ -286,32 +340,71 @@ const normalizeAnalyzerResult = (result) => ({
     } else {
       reuseSection.style.display = 'none'
     }
+  }
 
-    const longSec = panel.querySelector('.pwguard-longuse-section')
-    if (reuseResult.isLongUsed) {
-      longSec.style.display = 'block'
-      panel.querySelector('.pwguard-longuse-warnings').innerHTML = warnings
-        .filter((w) => w.includes('일째'))
-        .map((w) => `<li>${w}</li>`)
-        .join('')
+  function renderLeakChecking(isChecking) {
+    if (!panel) return
+    const checkingEl = panel.querySelector('.pwguard-leak-checking')
+    const leakSection = panel.querySelector('.pwguard-leak-section')
+    const leakSafeSection = panel.querySelector('.pwguard-leak-safe-section')
+    if (!checkingEl) return
+    if (isChecking) {
+      leakSection.style.display = 'none'
+      leakSafeSection.style.display = 'none'
+      checkingEl.style.display = 'flex'
     } else {
-      longSec.style.display = 'none'
+      checkingEl.style.display = 'none'
     }
   }
 
-  // ─── 이벤트 핸들러 ──────────────────────────────────────────────────────────
+  function renderLeak(leakResult) {
+    if (!panel) return
+    const leakSection = panel.querySelector('.pwguard-leak-section')
+    const leakSafeSection = panel.querySelector('.pwguard-leak-safe-section')
+    const checkingEl = panel.querySelector('.pwguard-leak-checking')
+    const countEl = panel.querySelector('.pwguard-leak-count')
+
+    leakSection.style.display = 'none'
+    leakSafeSection.style.display = 'none'
+    checkingEl.style.display = 'none'
+
+    if (leakResult === null) return
+    if (leakResult.leaked) {
+      leakSection.style.display = 'flex'
+      if (countEl)
+        countEl.textContent = leakResult.count
+          ? `(${leakResult.count.toLocaleString()}회 노출)`
+          : ''
+    } else {
+      leakSafeSection.style.display = 'flex'
+    }
+  }
+
   function handleInput(e) {
     const input = e.target
-    const value = input.value
+    let value = input.value
     const domain = getSiteName()
 
-    // [수정] 나중에 로그인 성공 시 사용하기 위해 입력값 보관
+    if (value.length > 50) return // 오염된 값 무시
+    value = value.trim()
+
+    // 이벤트가 발생할 때마다 백업도 함께 업데이트
+    passwordBackups.set(input, value)
     lastTypedPassword = value
 
-    // 주민번호 필드인 경우 분석 패널 업데이트 중단
     if (isJuminInput(input)) return
-
     positionPanel(input)
+
+    let username = 'unknown'
+    const form = input.closest('form')
+    if (form) {
+      const idInput = form.querySelector(
+        'input[type="text"], input[type="email"], input[name*="id" i], input[name*="user" i], input[name*="login" i]',
+      )
+      if (idInput && idInput.value) {
+        username = idInput.value.trim()
+      }
+    }
 
     clearTimeout(strengthDebounceTimer)
     strengthDebounceTimer = setTimeout(() => {
@@ -326,37 +419,104 @@ const normalizeAnalyzerResult = (result) => ({
     if (value.length >= 4) {
       reuseDebounceTimer = setTimeout(async () => {
         try {
-          const reuseResult = await window.analyzeReuse(value, domain)
+          const reuseResult = await window.analyzeReuse(value, domain, username)
           renderReuse(reuseResult)
           const updatedRaw = window.PwAnalyzer?.evaluatePassword(value, {
             siteName: domain,
             reuseCount: reuseResult.reuseCount,
           })
           renderStrength(normalizeAnalyzerResult(updatedRaw))
-        } catch (err) {
-          console.warn('[PwGuard] Analysis delay:', err)
-        }
+        } catch (err) {}
       }, REUSE_DELAY)
+    }
+
+    clearTimeout(leakDebounceTimer)
+    if (value.length >= 4) {
+      renderLeak(null)
+      leakDebounceTimer = setTimeout(async () => {
+        if (leakCache.has(value)) {
+          const cached = leakCache.get(value)
+          renderLeak(cached)
+          return
+        }
+        try {
+          renderLeakChecking(true)
+          const sha1Hash = await window.PwUtils?.sha1Hex(value)
+          if (!sha1Hash) return
+          const leakResult = await chrome.runtime.sendMessage({
+            action: 'checkLeaked',
+            payload: { sha1Hash },
+          })
+          leakCache.set(value, leakResult)
+          renderLeak(leakResult)
+        } catch (err) {
+          renderLeakChecking(false)
+        }
+      }, LEAK_DELAY)
+    } else {
+      renderLeak(null)
     }
   }
 
-  // 로그인 시도를 추적하는 로직
-  function trackLoginAttempt() {
-    // 주민번호 필드인 경우 서버 저장을 원천 차단
-    if (activeInput && isJuminInput(activeInput)) {
-      console.log('[PwGuard] 주민번호 필드로 감지되어 기록을 생략합니다.')
-      return
+  function trackLoginAttempt(e) {
+    if (activeInput && isJuminInput(activeInput)) return
+
+    let form = null
+    if (e && e.target && e.target.closest) form = e.target.closest('form')
+    if (!form && activeInput) form = activeInput.closest('form')
+
+    let targetPassword = ''
+    const domain = getSiteName()
+    let username = 'unknown'
+
+    if (form) {
+      const idInput = form.querySelector(
+        'input[type="text"], input[type="email"], input[name*="id" i], input[name*="user" i], input[name*="login" i]',
+      )
+      if (idInput && idInput.value) {
+        username = idInput.value.trim()
+      }
+
+      const pwInputs = Array.from(
+        form.querySelectorAll('input[type="password"]'),
+      ).filter((input) => !isJuminInput(input))
+      for (let i = pwInputs.length - 1; i >= 0; i--) {
+        // [중요] 네이버가 폼 값을 오염시켰더라도, 우리의 안전한 백업(passwordBackups)에서 값을 꺼내옵니다.
+        const val = passwordBackups.get(pwInputs[i]) || pwInputs[i].value
+        if (val && val.trim().length >= 4 && val.trim().length <= 50) {
+          targetPassword = val.trim()
+          break
+        }
+      }
     }
 
-    if (lastTypedPassword.length < 4) return
+    if (!targetPassword && activeInput) {
+      const val = passwordBackups.get(activeInput) || activeInput.value
+      if (val && val.trim().length >= 4 && val.trim().length <= 50)
+        targetPassword = val.trim()
+    }
 
-    const domain = getSiteName()
-    window.PwUtils?.hashPassword(lastTypedPassword).then((hash) => {
-      chrome.runtime.sendMessage({
-        action: 'attemptLogin',
-        payload: { hash, domain },
+    if (!targetPassword && lastTypedPassword)
+      targetPassword = lastTypedPassword.trim()
+    if (!targetPassword || targetPassword.length < 4) return
+
+    // 💡 [디버깅] 여기서 콘솔창(F12)을 확인하세요! 진짜 비밀번호가 무사히 구출되었는지 뜹니다.
+    console.log('=====================================')
+    console.log('[PwGuard] 🚀 로그인/변경 시도 감지!')
+    console.log('[PwGuard] 👤 계정(ID):', username)
+    console.log('[PwGuard] 🔑 추출된 순수 비밀번호:', targetPassword)
+    console.log('=====================================')
+
+    clearTimeout(window.trackTimer)
+    window.trackTimer = setTimeout(() => {
+      window.PwUtils?.sha1Hex(targetPassword).then((hash) => {
+        console.log('[PwGuard] 🔒 생성된 해시값:', hash) // 아이디가 달라도 이 해시값이 똑같이 나오면 대성공!
+        chrome.runtime.sendMessage({
+          action: 'attemptLogin',
+          payload: { hash, domain, username },
+        })
       })
-    })
+    }, 300)
   }
 
   function attachEvents(root) {
@@ -366,9 +526,7 @@ const normalizeAnalyzerResult = (result) => ({
       if (input.dataset.pwguardAttached) return
       input.dataset.pwguardAttached = 'true'
       input.addEventListener('focus', (e) => {
-        // [수정] 주민번호 필드라면 분석 패널을 아예 띄우지 않음
         if (isJuminInput(e.target)) return
-
         activeInput = e.target
         createPanel()
         positionPanel(e.target)
@@ -381,21 +539,31 @@ const normalizeAnalyzerResult = (result) => ({
             hidePanel()
         }, 150)
       })
-
       input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') trackLoginAttempt()
+        if (e.key === 'Enter') trackLoginAttempt(e)
       })
+
+      const parentForm = input.closest('form')
+      if (parentForm && !parentForm.dataset.pwguardFormAttached) {
+        parentForm.dataset.pwguardFormAttached = 'true'
+        parentForm.addEventListener('submit', (e) => {
+          trackLoginAttempt(e)
+        })
+      }
     })
 
     const submitButtons = root.querySelectorAll(
-      'button[type="submit"], input[type="submit"], .login-btn, #login-btn',
+      'button[type="submit"], input[type="submit"], .login-btn, #login-btn, ' +
+        '#loginBtn, .btn_login, .login_btn, a[href*="login"], a[onclick*="login"], ' +
+        '[class*="login" i] button, [class*="login" i] a, #btnSubmit',
     )
     submitButtons.forEach((btn) => {
+      if (btn.dataset.pwguardBtnAttached) return
+      btn.dataset.pwguardBtnAttached = 'true'
       btn.addEventListener('click', trackLoginAttempt)
     })
   }
 
-  // ─── 초기화 ──────────────────────────────────────────────────────────────────
   function init() {
     createPanel()
     attachEvents(document)

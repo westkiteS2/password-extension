@@ -6,7 +6,8 @@
 
 const LONG_USE_THRESHOLD_DAYS = 90
 
-async function analyzeReuse(password, currentDomain) {
+// [수정] 현재 로그인 폼에서 입력 중인 아이디(username)를 세 번째 인자로 추가로 받습니다.
+async function analyzeReuse(password, currentDomain, username = 'unknown') {
   if (!password || password.length < 1 || !currentDomain) {
     return {
       isReused: false,
@@ -20,20 +21,14 @@ async function analyzeReuse(password, currentDomain) {
 
   const hash = await window.PwUtils.sha1Hex(password)
 
-  // background.js에 메시지로 요청
+  // background.js에 메시지로 요청할 때 username 컬럼 조건도 함께 전달합니다.
   const reuseInfo = await chrome.runtime.sendMessage({
     action: 'checkReuse',
-    payload: { hash, domain: currentDomain },
+    payload: { hash, domain: currentDomain, username },
   })
 
   const daysOnSite = await chrome.runtime.sendMessage({
     action: 'getDaysUsedOnSite',
-    payload: { hash, domain: currentDomain },
-  })
-
-  // 기록 저장
-  await chrome.runtime.sendMessage({
-    action: 'recordHash',
     payload: { hash, domain: currentDomain },
   })
 
