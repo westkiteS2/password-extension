@@ -32,8 +32,13 @@ const normalizeAnalyzerResult = (result) => ({
   let panel = null
   let strengthDebounceTimer = null
   let reuseDebounceTimer = null
+  let leakDebounceTimer = null      // [추가] 유출 검사용 디바운스 타이머
   let isDetailOpen = false
   let isMinimized = false
+
+  // [추가] 유출 검사 결과 캐시 (동일 비밀번호 중복 API 호출 방지)
+  const leakCache = new Map()
+  const LEAK_DELAY = 700          // 입력 멈춘 후 0.7초 뒤 검사
 
   // 로그인 성공 판단을 위한 임시 상태 변수
   let lastTypedPassword = ''
@@ -104,6 +109,22 @@ const normalizeAnalyzerResult = (result) => ({
         <div class="pwguard-longuse-section" style="display:none">
           <span class="pwguard-longuse-badge">🕐 장기 사용 감지</span>
           <ul class="pwguard-longuse-warnings"></ul>
+        </div>
+
+        <div class="pwguard-leak-section pwguard-leak-row" style="display:none">
+          <span class="pwguard-leak-dot"></span>
+          <span class="pwguard-leak-label">유출 이력 있음</span>
+          <span class="pwguard-leak-sub pwguard-leak-count"></span>
+        </div>
+
+        <div class="pwguard-leak-safe-section pwguard-leak-row" style="display:none">
+          <span class="pwguard-leak-dot"></span>
+          <span class="pwguard-leak-label">유출 이력 없음</span>
+        </div>
+
+        <div class="pwguard-leak-checking pwguard-leak-row" style="display:none">
+          <span class="pwguard-leak-dot"></span>
+          <span class="pwguard-leak-label">유출 여부 확인 중...</span>
         </div>
       </div>
     `
@@ -299,6 +320,51 @@ const normalizeAnalyzerResult = (result) => ({
     }
   }
 
+  // ─── 유출 검사 렌더링 ────────────────────────────────────────────────────────
+  function renderLeakChecking(isChecking) {
+    if (!panel) return
+    const checkingEl      = panel.querySelector('.pwguard-leak-checking')
+    const leakSection     = panel.querySelector('.pwguard-leak-section')
+    const leakSafeSection = panel.querySelector('.pwguard-leak-safe-section')
+    if (!checkingEl) return
+
+    if (isChecking) {
+      leakSection.style.display     = 'none'
+      leakSafeSection.style.display = 'none'
+      checkingEl.style.display      = 'flex'
+    } else {
+      checkingEl.style.display = 'none'
+    }
+  }
+
+  function renderLeak(leakResult) {
+    if (!panel) return
+
+    const leakSection    = panel.querySelector('.pwguard-leak-section')
+    const leakSafeSection = panel.querySelector('.pwguard-leak-safe-section')
+    const checkingEl     = panel.querySelector('.pwguard-leak-checking')
+    const countEl        = panel.querySelector('.pwguard-leak-count')
+
+    // 셋 다 일단 숨김
+    leakSection.style.display    = 'none'
+    leakSafeSection.style.display = 'none'
+    checkingEl.style.display     = 'none'
+
+    if (leakResult === null) return   // 검사 전 → 모두 숨김
+
+    if (leakResult.leaked) {
+      leakSection.style.display = 'flex'
+      // 유출 횟수가 있으면 서브텍스트로 표시
+      if (countEl) {
+        countEl.textContent = leakResult.count
+          ? `(${leakResult.count.toLocaleString()}회 노출)`
+          : ''
+      }
+    } else {
+      leakSafeSection.style.display = 'flex'
+    }
+  }
+
   // ─── 이벤트 핸들러 ──────────────────────────────────────────────────────────
   function handleInput(e) {
     const input = e.target
@@ -338,6 +404,59 @@ const normalizeAnalyzerResult = (result) => ({
         }
       }, REUSE_DELAY)
     }
+
+    // ─── 유출 검사 (입력 멈춘 후 LEAK_DELAY ms 뒤 실행) ────────────────────
+    clearTimeout(leakDebounceTimer)
+    if (value.length >= 4) {
+      // 입력 중엔 이전 결과 초기화 + 로딩 표시
+      renderLeak(null)
+      leakDebounceTimer = setTimeout(async () => {
+        // 캐시 확인 (동일 비밀번호 반복 입력 시 API 재호출 방지)
+        if (leakCache.has(value)) {
+          const cached = leakCache.get(value)
+          renderLeak(cached)
+          // 유출된 경우 점수에도 반영
+          if (cached.leaked) {
+            const leakedRaw = window.PwAnalyzer?.evaluatePassword(value, {
+              siteName: domain,
+              reuseCount: 0,
+              leaked: true,
+            })
+            renderStrength(normalizeAnalyzerResult(leakedRaw))
+          }
+          return
+        }
+
+        try {
+          renderLeakChecking(true)
+          const sha1Hash = await window.PwUtils?.sha1Hex(value)
+          if (!sha1Hash) return
+
+          const leakResult = await chrome.runtime.sendMessage({
+            action: 'checkLeaked',
+            payload: { sha1Hash },
+          })
+
+          leakCache.set(value, leakResult)   // 결과 캐싱
+          renderLeak(leakResult)
+
+          // 유출된 경우 강도 점수에 반영 (analyzer.js의 leaked 플래그 활용)
+          if (leakResult.leaked) {
+            const leakedRaw = window.PwAnalyzer?.evaluatePassword(value, {
+              siteName: domain,
+              reuseCount: 0,
+              leaked: true,
+            })
+            renderStrength(normalizeAnalyzerResult(leakedRaw))
+          }
+        } catch (err) {
+          renderLeakChecking(false)
+          console.warn('[PwGuard] 유출 검사 오류:', err)
+        }
+      }, LEAK_DELAY)
+    } else {
+      renderLeak(null)  // 4자 미만이면 유출 섹션 숨김
+    }
   }
 
   // 로그인 시도를 추적하는 로직
@@ -351,7 +470,7 @@ const normalizeAnalyzerResult = (result) => ({
     if (lastTypedPassword.length < 4) return
 
     const domain = getSiteName()
-    window.PwUtils?.hashPassword(lastTypedPassword).then((hash) => {
+    window.PwUtils?.sha1Hex(lastTypedPassword).then((hash) => {
       chrome.runtime.sendMessage({
         action: 'attemptLogin',
         payload: { hash, domain },
